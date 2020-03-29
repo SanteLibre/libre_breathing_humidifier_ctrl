@@ -1,4 +1,4 @@
-//V3 - Inclut une thermistance de 10K dans l'eau et un arrêt si temp_max_eau est atteinte
+//V4 - Inclut une thermistance de 10K dans l'eau et un arrêt si temp_max_eau est atteinte
 
 //Libraries
 #include <DHT.h>;
@@ -7,24 +7,24 @@
 #define DHTPIN 7     // what pin we're connected to
 #define DHTTYPE DHT22   // DHT 22  (AM2302)
 DHT dht(DHTPIN, DHTTYPE); //// Initialize DHT sensor for normal 16mhz Arduino
-const int ledPin =  12;// the number of the LED pin
-const long interval = 1000;           // interval at which to blink (milliseconds)
 
 //Variables
 int chk;
 float hum;  //Stores humidity value
 float temp; //Stores temperature value
 float temp_set_air = 37;
-float temp_airwaylow = 35.5; //Temp for indicator warning
-float time_airwaylow = 25000; //Temp for indicator warning
-float temp_airwaymax = 43;
 float temp_max_eau = 90;
-float toneState = 1000;
 float PID_error = 0;
 float previous_error = 0;
 float elapsedTime, Time, timePrev;
-int ledState = LOW;             // ledState used to set the LED
-unsigned long previousMillis = 0;        // will store last time LED was updated
+
+//V4
+bool boolAlarmStatus=false;
+bool boolWarningStatus=false;
+float tAlarm;
+float dtAlarm=0;
+float warnLevel = 35.5;
+#define warnLedPin 13
 
 //PID constants
 int PID_value = 0;
@@ -33,6 +33,7 @@ int PID_p = 0;    int PID_i = 0;    int PID_d = 0;
 
 //Initializing PWM Pin
 int beep_pin = 13;
+int led_pin = 6;
 int thermistor_pin = 0;
 int Vo;
 float R1 = 10000;
@@ -46,8 +47,10 @@ void setup() {
   Time = millis(); 
   
   //Declaring PWM pin as output
+  pinMode(led_pin, OUTPUT);
   pinMode(beep_pin, OUTPUT);
-  pinMode(ledPin, OUTPUT);
+  pinMode(warnLedPin, OUTPUT); //V4
+  
 }
 
 void loop() {
@@ -56,39 +59,35 @@ void loop() {
   hum = dht.readHumidity();
   temp= dht.readTemperature();
 
+  Vo = analogRead(thermistor_pin);
+  R2 = R1 * (1023.0 / (float)Vo - 1.0);
+  logR2 = log(R2);
+  T = (1.0 / (c1 + c2*logR2 + c3*logR2*logR2*logR2));
+  T = T - 273.15;
+
   //Print temp and humidity values to serial monitor
+  
+  Serial.print("Water Temp: "); 
+  Serial.print(T);
+  Serial.println(" Celsius"); 
+
   Serial.print("Air Humidity: ");
   Serial.print(hum);
   Serial.print(" %, Air Temp: ");
   Serial.print(temp);
   Serial.println(" Celsius");
 
-  ///Alarm///
-
-
-  ///Alarmes et Indicateurs///
+  ///Beep Beep 
   
-  ////Over airway indicator////
-  if(temp > temp_airwaymax)
+  //V3
+  if(temp > temp_set_air)
   {
-   PID_value = 0; //Stop tout chauffage au niveau de la bouilloire.
-   tone(beep_pin,toneState);
-   ledState = HIGH;
+      tone(beep_pin,1000,500);
     }
-
-    ////Under airway temp////
-  if(temp < temp_airwaymax)
-  {
-   PID_value = 0; //Stop tout chauffage au niveau de la bouilloire.
-   noTone(beep_pin);
-   ledState = LOW;
-    }
-
   
-  ////////////////////////////////////////////////////////////////////////////////////
-   
-   digitalWrite(ledPin, ledState);
-
+  //V4
+  chkAlarm(); //Call for function chkAlarm
+    
   //Error between the setpoint and the real value
   PID_error = temp_set_air - temp;
   
@@ -115,12 +114,75 @@ void loop() {
   {    PID_value = 0;    }
   if(PID_value > 100)  
   {    PID_value = 100;  }
-
+  
+  //Check température eau
+    if(T > temp_max_eau)
+  {    PID_value = 0;    }
+  
+  analogWrite(led_pin,PID_value);
 
   previous_error = PID_error;     //Remember to store the previous error for next loop.
+
+  //Delay 0.5 sec.
+  delay(300); 
   
   //Serial Print PWM Value
   Serial.print("PWM Value :");
   Serial.println(PID_value);
 
+}
+
+//V4
+void chkAlarm() {
+  if(temp < warnLevel){
+     
+      if(boolWarningStatus==false){
+          tAlarm=Time; //Warning start time
+      }
+      dtAlarm=Time-tAlarm; //Update time since alarm start
+      
+      if(dtAlarm>25000 && boolWarningStatus==false){
+          boolWarningStatus=true;
+      }
+      
+      //Check if alarm is on or off
+      if(boolAlarmStatus==false){
+        if(temp<25.43*pow(dtAlarm/1000,0.0777)){  //Set alam
+          boolAlarmStatus=true;
+        }
+      }
+      else{
+        if(temp>28.03*pow(dtAlarm/1000,0.05959)){ //Mute alarm
+            boolAlarmStatus=false;
+        } 
+      }
+  }
+  else if (boolWarningStatus ==true|| boolAlarmStatus==true) //If above warning, disable alarm/warning
+    {
+      boolWarningStatus=false;
+      boolAlarmStatus=false;
+  }  
+
+setAlarm();
+setWarning();
+
+}
+
+void setAlarm() {
+  if(boolAlarmStatus==false){
+    noTone(beep_pin);
+  }
+  else {
+    tone(beep_pin,1000,500);
+  }
+  
+}
+
+void setWarning() {
+    if(boolWarningStatus==false){
+    digitalWrite(warnLedPin, LOW);
+  }
+  else {
+    digitalWrite(warnLedPin, HIGH);
+  }
 }
